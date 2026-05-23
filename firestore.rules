@@ -1,0 +1,90 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function userDocExists() {
+      return request.auth != null && exists(userPath());
+    }
+
+    function userRole() {
+      return get(userPath()).data.role;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return userDocExists() && userRole() == 'ADMIN';
+    }
+
+    function isCashier() {
+      return userDocExists() && userRole() == 'CASHIER';
+    }
+
+    function canReadFinancialSale() {
+      return isAdmin()
+        || (isCashier() && resource.data.employeeId == request.auth.uid);
+    }
+
+    function canReadFinancialSaleItem() {
+      return isAdmin()
+        || (
+          isCashier()
+          && get(/databases/$(database)/documents/sales/$(resource.data.saleId)).data.employeeId
+              == request.auth.uid
+        );
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll(['email', 'role', 'createdAt', 'updatedAt'])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0
+        && request.resource.data.role == 'CASHIER';
+
+      allow update: if isAdmin() && userId != request.auth.uid
+        || (isSignedIn() && request.auth.uid == userId
+            && request.resource.data.role == resource.data.role);
+
+      allow delete: if false;
+    }
+
+    match /products/{id} {
+      allow read: if userDocExists();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (userDocExists()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['stock', 'updatedAt'])
+            && request.resource.data.stock is int
+            && request.resource.data.stock >= 0
+            && request.resource.data.stock < resource.data.stock);
+    }
+
+    match /sales/{id} {
+      allow read: if userDocExists() && canReadFinancialSale();
+      allow create, update: if userDocExists();
+      allow delete: if isAdmin();
+    }
+
+    match /saleItems/{id} {
+      allow read: if userDocExists() && canReadFinancialSaleItem();
+      allow create, update: if userDocExists();
+      allow delete: if isAdmin();
+    }
+
+    match /inventoryLogs/{id} {
+      allow read: if userDocExists();
+      allow create: if userDocExists();
+      allow update, delete: if isAdmin();
+    }
+  }
+}

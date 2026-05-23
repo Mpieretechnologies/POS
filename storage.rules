@@ -1,0 +1,22 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function userDocExists() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return userDocExists()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+    }
+
+    match /products/{productId}/{fileName} {
+      allow read: if userDocExists();
+      allow write: if isAdmin()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
